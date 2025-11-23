@@ -64,7 +64,7 @@ Follow these steps to run the dashboard on your local machine.
 
 1.  **Clone the Repository**
     ```bash
-    git clone [https://github.com/buraktuluceoglu/Global-CO2-Analysis-Dashboard](https://github.com/buraktuluceoglu/Global-CO2-Analysis-Dashboard)
+    git clone https://github.com/buraktuluceoglu/Global-CO2-Analysis-Dashboard
     cd global-co2-analysis-dashboard
     ```
 
