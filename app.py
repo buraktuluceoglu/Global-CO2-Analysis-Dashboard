@@ -408,3 +408,113 @@ with tab2:
             title=f"Per Capita Emission Intensity ({start_year}-{selected_year})"
         )
         st.plotly_chart(fig_heat_time, use_container_width=True)
+
+# ==============================================================================
+# PART 3: RELATIONAL AND ANALYTICAL (Snapshot: selected_year)
+# ==============================================================================
+with tab3:
+    # --- CHART 7: PARALLEL COORDINATES & FEATURE IMPORTANCE ---
+    st.subheader("7. Country Profiles (Parallel Coordinates)")
+    
+    # Data for Parallel Coordinates
+    df_pcp = df_year.nlargest(40, 'co2').copy().fillna(0)
+    c_map = {c: i for i, c in enumerate(df_pcp['continent'].unique())}
+    df_pcp['c_code'] = df_pcp['continent'].map(c_map)
+    
+    # --- FEATURE IMPORTANCE (INTEGRATED) ---
+    available_features = ['gdp', 'co2_per_capita', 'population']
+    # Add energy if available
+    if 'energy_per_capita' in df_pcp.columns:
+        available_features.append('energy_per_capita')
+        
+    sorted_dims = available_features # Default
+    importance_df = pd.DataFrame()
+    
+    if ml_available:
+        try:
+            X = df_pcp[available_features]
+            y = df_pcp['co2'] 
+            
+            rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+            rf_model.fit(X, y)
+            
+            importance_df = pd.DataFrame({
+                'Feature': available_features,
+                'Importance': rf_model.feature_importances_
+            }).sort_values(by='Importance', ascending=False)
+            
+            sorted_dims = importance_df['Feature'].tolist()
+            
+        except Exception as e:
+            st.warning(f"Feature importance calculation skipped: {e}")
+
+    # --- PARALLEL COORDINATES PLOT ---
+    # Put Target (CO2) first, then sorted features
+    final_dims_list = ['co2'] + [d for d in sorted_dims if d != 'co2']
+    
+    plot_dims = [dict(range=[0, df_pcp[c].max()], label=c.replace('_', ' ').title(), values=df_pcp[c]) for c in final_dims_list]
+    
+    fig_par = go.Figure(data=go.Parcoords(
+        line=dict(color=df_pcp['c_code'], colorscale='Viridis', showscale=True, colorbar=dict(title='Continent', tickvals=list(c_map.values()), ticktext=list(c_map.keys()))),
+        dimensions=plot_dims
+    ))
+    fig_par.update_layout(margin=dict(l=60, r=40, b=20, t=50), height=500)
+    st.plotly_chart(fig_par, use_container_width=True)
+
+    if ml_available and not importance_df.empty:
+        with st.expander("View Feature Importance Scores"):
+            fig_imp = px.bar(importance_df.sort_values('Importance', ascending=True), x='Importance', y='Feature', orientation='h', color='Importance', color_continuous_scale='Blues')
+            st.plotly_chart(fig_imp, use_container_width=True)
+
+    st.markdown("---")
+
+    col3a, col3b = st.columns(2)
+    
+    with col3a:
+        # --- CHART 8: BOX PLOT ---
+        st.subheader("8. Regional Disparities (Box Plot)")
+        st.caption("Comparing the distribution of CO2 emissions across continents (Box Plot).")
+        
+        df_box = df_year[df_year['co2_per_capita'] > 0].copy()
+        
+        fig_box = px.box(
+            df_box, y="co2_per_capita", x="continent", color="continent",
+            points="all", hover_name="country", log_y=True,
+            color_discrete_sequence=px.colors.qualitative.Set2,
+            title=f"CO2 Per Capita Distribution ({selected_year})",
+            labels={"co2_per_capita": "CO2 Per Capita (Log)", "continent": "Continent"}
+        )
+        fig_box.update_layout(height=500, margin=dict(l=10, r=10, t=40, b=10), showlegend=False)
+        st.plotly_chart(fig_box, use_container_width=True)
+        
+    with col3b:
+        # --- CHART 9: 3D CLUSTERING (K-MEANS) ---
+        st.subheader("9. 3D Country Grouping")
+        st.caption("AI groups countries in 3D space based on GDP, Population, and Emission features.")
+        
+        ml_data_3d = df_year[['country', 'continent', 'co2', 'gdp', 'population']].dropna()
+        ml_data_3d = ml_data_3d[(ml_data_3d['gdp'] > 0) & (ml_data_3d['co2'] > 0) & (ml_data_3d['population'] > 0)]
+        
+        use_3d_ml = st.checkbox("Show Clusters (K-Means Clustering)", value=True)
+        
+        if use_3d_ml and ml_available:
+            X_3d = np.log1p(ml_data_3d[['co2', 'gdp', 'population']])
+            kmeans = KMeans(n_clusters=4, random_state=42)
+            ml_data_3d['Cluster'] = kmeans.fit_predict(X_3d)
+            ml_data_3d['Cluster'] = ml_data_3d['Cluster'].astype(str)
+            color_col = "Cluster"
+            title_txt = "AI-Determined Similar Country Clusters"
+        else:
+            color_col = "continent"
+            title_txt = "3D Distribution by Continent"
+            
+        fig_3d = px.scatter_3d(
+            ml_data_3d, x='gdp', y='co2', z='population',
+            color=color_col, hover_name='country',
+            log_x=True, log_y=True, log_z=True,
+            color_discrete_sequence=px.colors.qualitative.Set2,
+            labels={'gdp': 'GDP (Log)', 'co2': 'CO2 (Log)', 'population': 'Population (Log)'},
+            title=title_txt
+        )
+        fig_3d.update_layout(margin=dict(l=0, r=0, b=0, t=30), height=500)
+        st.plotly_chart(fig_3d, use_container_width=True)
