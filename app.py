@@ -320,3 +320,91 @@ with tab1:
     )])
     fig_sankey.update_layout(height=400, font_size=12)
     st.plotly_chart(fig_sankey, use_container_width=True)
+
+# ==============================================================================
+# PART 2: TIME AND TREND ANALYSIS (Filtered by Range)
+# ==============================================================================
+with tab2:
+    # --- CHART 4: ANIMATED SCATTER ---
+    st.subheader("4. Development Story (Animated Scatter)")
+    # Uses selected Range
+    df_anim = df[(df['year'] >= 1950) & (df['year'] <= 2022) & (df['gdp'] > 0) & (df['population'] > 0)].copy()
+    
+    fig_anim = px.scatter(
+        df_anim, x="gdp", y="co2", animation_frame="year", animation_group="country",
+        size="population", color="continent", hover_name="country",
+        log_x=True, log_y=True, size_max=55, range_x=[1e9, 3e13], range_y=[1, 2e4],
+        color_discrete_sequence=px.colors.qualitative.Set2,
+        labels={"gdp": "GDP (Dollar)", "co2": "CO2 (Mt)"}
+    )
+    st.plotly_chart(fig_anim, use_container_width=True)
+
+    col2a, col2b = st.columns(2)
+    
+    with col2a:
+        # --- CHART 5: LINE CHART ---
+        st.subheader("5. Comparative Trends")
+        
+        if selected_countries:
+            met = st.radio("Select Metric:", ["co2", "gdp", "co2_per_capita"], horizontal=True)
+            
+            df_trend = df[df['country'].isin(selected_countries) & (df['year'] >= start_year) & (df['year'] <= selected_year)].copy()
+            show_forecast = st.checkbox("Add Future Forecast (Linear Regression)")
+            
+            final_df = df_trend.copy()
+            final_df['Type'] = 'Actual'
+            
+            if show_forecast and ml_available:
+                forecast_data = []
+                for country in selected_countries:
+                    country_df = df_trend[df_trend['country'] == country]
+                    country_df_clean = country_df.dropna(subset=[met])
+                    
+                    if len(country_df_clean) > 3:
+                        X = country_df_clean[['year']]
+                        y = country_df_clean[met]
+                        model = LinearRegression()
+                        model.fit(X, y)
+                        
+                        last_actual_year = country_df_clean['year'].max()
+                        last_actual_val = country_df_clean.loc[country_df_clean['year'] == last_actual_year, met].values[0]
+                        pred_at_last_year = model.predict([[last_actual_year]])[0]
+                        offset = last_actual_val - pred_at_last_year
+                        
+                        forecast_data.append({'country': country, 'year': last_actual_year, met: last_actual_val, 'Type': 'Forecast'})
+                        
+                        future_years = np.arange(selected_year + 1, selected_year + 11).reshape(-1, 1)
+                        predictions = model.predict(future_years)
+                        
+                        for yr, pred in zip(future_years.flatten(), predictions):
+                            aligned_pred = pred + offset
+                            forecast_data.append({'country': country, 'year': yr, met: max(0, aligned_pred), 'Type': 'Forecast'})
+                
+                if forecast_data:
+                    df_forecast = pd.DataFrame(forecast_data)
+                    final_df = pd.concat([final_df, df_forecast], ignore_index=True)
+            
+            fig_line = px.line(
+                final_df, x="year", y=met, color="country", line_dash="Type", 
+                title=f"{met} Trend ({start_year}-{selected_year} + Forecast)", markers=False,
+                color_discrete_sequence=px.colors.qualitative.Set2
+            )
+            fig_line.update_traces(mode="lines", line=dict(width=2))
+            fig_line.update_layout(hovermode="x unified", xaxis_title="Year", yaxis_title=met, height=500)
+            st.plotly_chart(fig_line, use_container_width=True)
+        else:
+            st.info("Please select countries from the sidebar or check 'Select All'.")
+            
+    with col2b:
+        # --- CHART 6: TEMPORAL HEATMAP ---
+        st.subheader("6. Emission Intensity (Heatmap)")
+        top_emitters = df[df['year'] == selected_year].nlargest(15, 'co2')['country'].tolist()
+        heat_data = df[(df['country'].isin(top_emitters)) & (df['year'] >= start_year) & (df['year'] <= selected_year)]
+        heat_pivot = heat_data.pivot(index='country', columns='year', values='co2_per_capita')
+        
+        fig_heat_time = px.imshow(
+            heat_pivot, aspect="auto", color_continuous_scale="Magma",
+            labels=dict(x="Year", y="Country", color="Tons/Person"),
+            title=f"Per Capita Emission Intensity ({start_year}-{selected_year})"
+        )
+        st.plotly_chart(fig_heat_time, use_container_width=True)
