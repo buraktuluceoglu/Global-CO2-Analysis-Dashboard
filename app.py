@@ -209,3 +209,114 @@ tab1, tab2, tab3 = st.tabs([
     "Time & Trends", 
     "Relational & Analytical"
 ])
+# ==============================================================================
+# PART 1: GLOBAL AND STRUCTURAL ANALYSIS 
+# ==============================================================================
+with tab1:    
+    col1a, col1b = st.columns([2, 1])
+    
+    with col1a:
+        # --- CHART 1: 3D MAP ---
+        st.subheader("1. Global Emission Map")
+        
+        map_mode = st.radio("Map Mode:", ["Raw CO2 (Animated Period)", "ML: Similarity Groups (K-Means)"], horizontal=True)
+        
+        if "ML" in map_mode and ml_available:
+            st.info(f"🤖 **AI Analysis ({selected_year}):** Countries grouped by CO2, GDP, and Population similarity.")
+            
+            ml_data = df_year[['iso_code', 'country', 'co2', 'gdp', 'population']].copy()
+            
+            for col in ['co2', 'gdp', 'population']:
+                ml_data[col] = ml_data[col].fillna(ml_data[col].median())
+            
+            ml_features = np.log1p(ml_data[['co2', 'gdp', 'population']])
+            scaler = StandardScaler()
+            scaled_features = scaler.fit_transform(ml_features)
+            
+            kmeans = KMeans(n_clusters=4, random_state=42)
+            ml_data['Cluster'] = kmeans.fit_predict(scaled_features)
+            ml_data['Cluster'] = "Group " + (ml_data['Cluster'] + 1).astype(str)
+            
+            fig_globe = px.choropleth(
+                ml_data,
+                locations="iso_code",
+                color="Cluster", 
+                hover_name="country",
+                hover_data=["co2", "gdp", "population"],
+                projection="orthographic",
+                title=f"Country Clusters (AI - K-Means)",
+                color_discrete_sequence=px.colors.qualitative.Set2
+            )
+        else:
+            # ANIMATED MAP
+            anim_df = df[(df["year"] >= 1900) & (df["year"] <= 2022) & (df["co2"] > 0)].sort_values("year")
+            max_co2 = anim_df["co2"].max()
+
+            fig_globe = px.choropleth(
+                anim_df,
+                locations="iso_code",
+                color="co2",
+                hover_name="country",
+                projection="orthographic",
+                animation_frame="year",
+                animation_group="iso_code",
+                color_continuous_scale="Reds",
+                range_color=[0, max_co2],
+                labels={"co2": "CO₂ (Mt)"}
+            )
+
+        fig_globe.update_geos(
+            showcoastlines=True, coastlinecolor="#333333",
+            showcountries=True, countrycolor="Black",
+            showocean=True, oceancolor="#eefaff"
+        )
+        fig_globe.update_layout(height=500, margin={"r":0,"t":0,"l":0,"b":0})
+        st.plotly_chart(fig_globe, use_container_width=True)
+
+    with col1b:
+        # --- CHART 2: SUNBURST/TREEMAP ---
+        st.subheader("2. Regional Hierarchy")
+        chart_type = st.radio("View:", ["Sunburst (Circular)", "Treemap (Rectangular)"], horizontal=True)
+        
+        df_hier = df_year[df_year['co2'] > 0]
+        if not df_hier.empty:
+            if "Sunburst" in chart_type:
+                fig_hier = px.sunburst(
+                    df_hier, path=['continent', 'country'], values='co2',
+                    color='continent', color_discrete_sequence=px.colors.qualitative.Set2
+                )
+            else:
+                fig_hier = px.treemap(
+                    df_hier, path=['continent', 'country'], values='co2',
+                    color='continent', color_discrete_sequence=px.colors.qualitative.Set2
+                )
+            st.plotly_chart(fig_hier, use_container_width=True)
+
+    # --- CHART 3: SANKEY ---
+    st.subheader("3. Energy Source Flows (Sankey)")
+    st.caption("Distribution of fossil fuels (Coal, Oil, Gas) by continent.")
+    
+    source_cols = ['coal_co2', 'oil_co2', 'gas_co2', 'cement_co2', 'flaring_co2']
+    df_sankey = df_year.groupby('continent')[source_cols].sum().reset_index()
+    
+    fuel_sources = ['Coal', 'Oil', 'Gas', 'Cement', 'Flaring']
+    continents = df_sankey['continent'].tolist()
+    all_nodes = fuel_sources + continents
+    
+    sources_idx, targets_idx, values_list = [], [], []
+    node_colors = ["#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3", "#a6d854"] + px.colors.qualitative.Set2
+    
+    for i, fuel in enumerate(source_cols):
+        for j, cont in enumerate(continents):
+            val = df_sankey.loc[df_sankey['continent'] == cont, fuel].values[0]
+            if val > 1: 
+                sources_idx.append(i)
+                targets_idx.append(len(fuel_sources) + j)
+                values_list.append(val)
+
+    fig_sankey = go.Figure(data=[go.Sankey(
+        node=dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=all_nodes, color=node_colors[:len(all_nodes)]),
+        link=dict(source=sources_idx, target=targets_idx, value=values_list)
+    )])
+    fig_sankey.update_layout(height=400, font_size=12)
+    st.plotly_chart(fig_sankey, use_container_width=True)
